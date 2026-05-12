@@ -1,7 +1,10 @@
 #pragma once
+
 #include <cassert>
 #include <cstdlib>
+#include <memory>
 #include <new>
+#include <type_traits>
 #include <utility>
 
 template <typename T> class RawMemory {
@@ -37,9 +40,10 @@ public:
   }
 
   const T *GetAddress() const noexcept { return buffer_; }
+
   T *GetAddress() noexcept { return buffer_; }
 
-  size_t Capacity() const { return capacity_; }
+  size_t Capacity() const noexcept { return capacity_; }
 
 private:
   static T *Allocate(size_t n) {
@@ -56,50 +60,48 @@ template <typename T> class Vector {
 public:
   Vector() = default;
 
-  explicit Vector(size_t size) : data_(size), size_(size) {
-    for (size_t i = 0; i != size; ++i) {
-      try {
-        new (data_ + i) T();
-      } catch (...) {
-        DestroyN(data_.GetAddress(), i);
-        throw;
-      }
-    }
+  explicit Vector(size_t size) : data_(size) {
+    std::uninitialized_value_construct_n(data_.GetAddress(), size);
+    size_ = size;
   }
 
-  Vector(const Vector &other) : data_(other.size_), size_(other.size_) {
-    for (size_t i = 0; i != other.size_; ++i) {
-      try {
-        CopyConstruct(data_ + i, other[i]);
-      } catch (...) {
-        DestroyN(data_.GetAddress(), i);
-        throw;
-      }
-    }
+  Vector(const Vector &other) : data_(other.size_) {
+    std::uninitialized_copy_n(other.data_.GetAddress(), other.size_,
+                              data_.GetAddress());
+    size_ = other.size_;
   }
 
-  ~Vector() { DestroyN(data_.GetAddress(), size_); }
+  ~Vector() { std::destroy_n(data_.GetAddress(), size_); }
 
   size_t Size() const noexcept { return size_; }
+
   size_t Capacity() const noexcept { return data_.Capacity(); }
 
   void Reserve(size_t new_capacity) {
-    if (new_capacity <= data_.Capacity())
+    if (new_capacity <= data_.Capacity()) {
       return;
-
-    RawMemory<T> new_data(new_capacity);
-    size_t copied = 0;
-    try {
-      for (; copied != size_; ++copied) {
-        CopyConstruct(new_data + copied, data_[copied]);
-      }
-    } catch (...) {
-      DestroyN(new_data.GetAddress(), copied);
-      throw;
     }
 
-    DestroyN(data_.GetAddress(), size_);
-    data_.Swap(new_data);
+    RawMemory<T> new_data(new_capacity);
+
+    constexpr bool use_move = std::is_nothrow_move_constructible_v<T> ||
+                              !std::is_copy_constructible_v<T>;
+
+    if constexpr (use_move) {
+      std::uninitialized_move_n(data_.GetAddress(), size_,
+                                new_data.GetAddress());
+      std::destroy_n(data_.GetAddress(), size_);
+      data_.Swap(new_data);
+    } else {
+      try {
+        std::uninitialized_copy_n(data_.GetAddress(), size_,
+                                  new_data.GetAddress());
+      } catch (...) {
+        throw;
+      }
+      std::destroy_n(data_.GetAddress(), size_);
+      data_.Swap(new_data);
+    }
   }
 
   const T &operator[](size_t index) const noexcept {
@@ -112,14 +114,6 @@ public:
   }
 
 private:
-  static void DestroyN(T *buf, size_t n) noexcept {
-    for (size_t i = 0; i != n; ++i)
-      Destroy(buf + i);
-  }
-
-  static void CopyConstruct(T *buf, const T &elem) { new (buf) T(elem); }
-  static void Destroy(T *buf) noexcept { buf->~T(); }
-
   RawMemory<T> data_;
   size_t size_ = 0;
 };
