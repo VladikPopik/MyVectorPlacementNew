@@ -14,6 +14,21 @@ public:
   explicit RawMemory(size_t capacity)
       : buffer_(Allocate(capacity)), capacity_(capacity) {}
 
+  RawMemory(const RawMemory &) = delete;
+  RawMemory &operator=(const RawMemory &) = delete;
+
+  RawMemory(RawMemory &&other) noexcept { Swap(other); }
+
+  RawMemory &operator=(RawMemory &&other) noexcept {
+    if (this != &other) {
+      Deallocate(buffer_);
+      buffer_ = nullptr;
+      capacity_ = 0;
+      Swap(other);
+    }
+    return *this;
+  }
+
   ~RawMemory() { Deallocate(buffer_); }
 
   T *operator+(size_t offset) noexcept {
@@ -71,11 +86,37 @@ public:
     size_ = other.size_;
   }
 
+  Vector(Vector &&other) noexcept { Swap(other); }
+
+  Vector &operator=(const Vector &other) {
+    if (this != &other) {
+      Vector tmp(other);
+      Swap(tmp);
+    }
+    return *this;
+  }
+
+  Vector &operator=(Vector &&other) noexcept {
+    if (this != &other) {
+      Swap(other);
+    }
+    return *this;
+  }
+
   ~Vector() { std::destroy_n(data_.GetAddress(), size_); }
 
   size_t Size() const noexcept { return size_; }
 
   size_t Capacity() const noexcept { return data_.Capacity(); }
+
+  const T &operator[](size_t index) const noexcept { return data_[index]; }
+
+  T &operator[](size_t index) noexcept { return data_[index]; }
+
+  void Swap(Vector &other) noexcept {
+    data_.Swap(other.data_);
+    std::swap(size_, other.size_);
+  }
 
   void Reserve(size_t new_capacity) {
     if (new_capacity <= data_.Capacity()) {
@@ -90,27 +131,13 @@ public:
     if constexpr (use_move) {
       std::uninitialized_move_n(data_.GetAddress(), size_,
                                 new_data.GetAddress());
-      std::destroy_n(data_.GetAddress(), size_);
-      data_.Swap(new_data);
     } else {
-      try {
-        std::uninitialized_copy_n(data_.GetAddress(), size_,
-                                  new_data.GetAddress());
-      } catch (...) {
-        throw;
-      }
-      std::destroy_n(data_.GetAddress(), size_);
-      data_.Swap(new_data);
+      std::uninitialized_copy_n(data_.GetAddress(), size_,
+                                new_data.GetAddress());
     }
-  }
 
-  const T &operator[](size_t index) const noexcept {
-    return const_cast<Vector &>(*this)[index];
-  }
-
-  T &operator[](size_t index) noexcept {
-    assert(index < size_);
-    return data_[index];
+    std::destroy_n(data_.GetAddress(), size_);
+    data_.Swap(new_data);
   }
 
 private:
