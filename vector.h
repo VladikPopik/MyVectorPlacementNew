@@ -121,16 +121,123 @@ public:
       RawMemory<T> new_data(new_capacity);
       if constexpr (std::is_nothrow_move_constructible_v<T>) {
         std::uninitialized_move_n(data_.data(), size_, new_data.data());
-      }
-      else if constexpr (std::is_copy_constructible_v<T>) {
+      } else if constexpr (std::is_copy_constructible_v<T>) {
         std::uninitialized_copy_n(data_.data(), size_, new_data.data());
-      }
-      else {
+      } else {
         std::uninitialized_move_n(data_.data(), size_, new_data.data());
       }
       std::destroy_n(data_.data(), size_);
       data_ = std::move(new_data);
     }
+  }
+
+  void Resize(size_t new_size) {
+    if (new_size < size_) {
+      std::destroy_n(data_.data() + new_size, size_ - new_size);
+      size_ = new_size;
+    } else if (new_size > size_) {
+      if (new_size > data_.capacity()) {
+        const size_t new_capacity = std::max(new_size, data_.capacity() * 2);
+        RawMemory<T> new_data(new_capacity);
+
+        if constexpr (std::is_nothrow_move_constructible_v<T>) {
+          std::uninitialized_move_n(data_.data(), size_, new_data.data());
+        } else if constexpr (std::is_copy_constructible_v<T>) {
+          std::uninitialized_copy_n(data_.data(), size_, new_data.data());
+        } else {
+          std::uninitialized_move_n(data_.data(), size_, new_data.data());
+        }
+
+        size_t i = size_;
+        try {
+          for (; i < new_size; ++i) {
+            new (new_data.data() + i) T();
+          }
+        } catch (...) {
+          std::destroy_n(new_data.data() + size_, i - size_);
+          std::destroy_n(new_data.data(), size_);
+          throw;
+        }
+
+        std::destroy_n(data_.data(), size_);
+        data_ = std::move(new_data);
+        size_ = new_size;
+      } else {
+        size_t i = size_;
+        try {
+          for (; i < new_size; ++i) {
+            new (data_.data() + i) T();
+          }
+        } catch (...) {
+          std::destroy_n(data_.data() + size_, i - size_);
+          throw;
+        }
+        size_ = new_size;
+      }
+    }
+  }
+
+  void PushBack(const T &value) {
+    if (size_ == data_.capacity()) {
+      const size_t new_capacity = size_ == 0 ? 1 : size_ * 2;
+      RawMemory<T> new_data(new_capacity);
+
+      if constexpr (std::is_nothrow_move_constructible_v<T>) {
+        std::uninitialized_move_n(data_.data(), size_, new_data.data());
+      } else if constexpr (std::is_copy_constructible_v<T>) {
+        std::uninitialized_copy_n(data_.data(), size_, new_data.data());
+      } else {
+        std::uninitialized_move_n(data_.data(), size_, new_data.data());
+      }
+
+      try {
+        new (new_data.data() + size_) T(value);
+      } catch (...) {
+        std::destroy_n(new_data.data(), size_);
+        throw;
+      }
+
+      std::destroy_n(data_.data(), size_);
+      data_ = std::move(new_data);
+      ++size_;
+    } else {
+      new (data_.data() + size_) T(value);
+      ++size_;
+    }
+  }
+
+  void PushBack(T &&value) {
+    if (size_ == data_.capacity()) {
+      const size_t new_capacity = size_ == 0 ? 1 : size_ * 2;
+      RawMemory<T> new_data(new_capacity);
+
+      if constexpr (std::is_nothrow_move_constructible_v<T>) {
+        std::uninitialized_move_n(data_.data(), size_, new_data.data());
+      } else if constexpr (std::is_copy_constructible_v<T>) {
+        std::uninitialized_copy_n(data_.data(), size_, new_data.data());
+      } else {
+        std::uninitialized_move_n(data_.data(), size_, new_data.data());
+      }
+
+      try {
+        new (new_data.data() + size_) T(std::move(value));
+      } catch (...) {
+        std::destroy_n(new_data.data(), size_);
+        throw;
+      }
+
+      std::destroy_n(data_.data(), size_);
+      data_ = std::move(new_data);
+      ++size_;
+    } else {
+      new (data_.data() + size_) T(std::move(value));
+      ++size_;
+    }
+  }
+
+  void PopBack() noexcept {
+    --size_;
+    std::destroy_at(data_.data() + size_);
   }
 
 private:
