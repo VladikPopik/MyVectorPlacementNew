@@ -61,6 +61,18 @@ private:
   }
 
 public:
+  using iterator = T *;
+  using const_iterator = const T *;
+
+  iterator begin() noexcept { return data_.data(); }
+
+  iterator end() noexcept { return data_.data() + size_; }
+
+  const_iterator begin() const noexcept { return data_.data(); }
+  const_iterator end() const noexcept { return data_.data() + size_; }
+  const_iterator cbegin() const noexcept { return data_.data(); }
+  const_iterator cend() const noexcept { return data_.data() + size_; }
+
   Vector() = default;
 
   explicit Vector(size_t size) : data_(size), size_(size) {
@@ -193,6 +205,88 @@ public:
   void PopBack() noexcept {
     --size_;
     std::destroy_at(data_.data() + size_);
+  }
+
+  template <typename... Args> auto Emplace(const_iterator pos, Args &&...args) {
+    const size_t idx = pos - begin();
+
+    if (idx == size_) {
+      return &EmplaceBack(std::forward<Args>(args)...);
+    }
+
+    T *const data = data_.data();
+
+    if (size_ < data_.capacity()) {
+      T temporary_item(std::forward<Args>(args)...);
+
+      ::new (static_cast<void *>(data + size_)) T(std::move(data[size_ - 1]));
+
+      try {
+        for (size_t i = size_ - 1; i > idx; --i) {
+          data[i] = std::move(data[i - 1]);
+        }
+        data[idx] = std::move(temporary_item);
+      } catch (...) {
+        std::destroy_at(data + size_);
+        throw;
+      }
+      ++size_;
+      return data + idx;
+    }
+
+    const size_t new_capacity = size_ == 0 ? 1 : size_ * 2;
+    RawMemory<T> new_data(new_capacity);
+
+    T *const new_item = ::new (static_cast<void *>(new_data.data() + idx))
+        T(std::forward<Args>(args)...);
+
+    try {
+      if constexpr (ShouldMoveSafely) {
+        std::uninitialized_move_n(data, idx, new_data.data());
+        std::uninitialized_move_n(data + idx, size_ - idx,
+                                  new_data.data() + idx + 1);
+      } else {
+        std::uninitialized_copy_n(data, idx, new_data.data());
+        std::uninitialized_copy_n(data + idx, size_ - idx,
+                                  new_data.data() + idx + 1);
+      }
+    } catch (...) {
+      std::destroy_at(new_item);
+      std::destroy_n(new_data.data(), idx);
+      std::destroy_n(new_data.data() + idx + 1,
+                     (size_ > idx) ? (size_ - idx) : 0);
+      throw;
+    }
+
+    std::destroy_n(data, size_);
+    data_ = std::move(new_data);
+    ++size_;
+    return data_.data() + idx;
+  }
+
+  auto Erase(const_iterator pos) {
+    const size_t idx = pos - begin();
+
+    if (size_ == 0 || idx >= size_) {
+      return data_.data() + idx;
+    }
+
+    T *const data = data_.data();
+
+    std::move(data + idx + 1, data + size_, data + idx);
+
+    std::destroy_at(data + size_ - 1);
+    --size_;
+
+    return data + idx;
+  }
+
+  auto Insert(const_iterator pos, const T &value) {
+    return Emplace(pos, value);
+  }
+
+  auto Insert(const_iterator pos, T &&value) {
+    return Emplace(pos, std::move(value));
   }
 
 private:
